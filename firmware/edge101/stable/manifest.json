@@ -1,0 +1,13 @@
+{
+  "name": "PVAutonomy Edge101",
+  "version": "1.0.4",
+  "builds": [
+    {
+      "chipFamily": "ESP32",
+      "ota": {
+        "md5": "8530f8bc0c4f5d8172e21865fafa55b5",
+        "path": "firmware.ota.bin"
+      }
+    }
+  ]
+}
