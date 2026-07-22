@@ -80,12 +80,31 @@ managed by the Onboarding publisher workflow, and are never modified by it.
 
 ## Status
 
-**`onboarding-v0.1.0` is not published.** No browser installer and no
-hardware validation are provided by this repository; the browser installer is
-a separate work package (ADR-0004 §6). Publication of a given
-`onboarding-v<semver>` release happens only through its own explicitly
-authorized publication run (WP2-C: private-source build → candidate transfer
-→ draft staging → manual promote).
+**The technical release `onboarding-v0.1.0` is published** (2026-07-22):
+
+- Release: <https://github.com/PVAutonomy/pvautonomy-firmware/releases/tag/onboarding-v0.1.0>
+- Published: 2026-07-22T13:27:24Z
+- Tag: `onboarding-v0.1.0` (targets publisher commit `cfd5115c33f70c1518e7ced5a4f6a684b3e7ec11`)
+- Source commit: `PVAutonomy/pvautonomy-config @ bc761fc58fca1982df360c9df2dbf90a950e3e5a`
+- Assets: exactly the four-asset contract (full serial binary, SHA-256
+  checksum, serial-install manifest, release metadata)
+- Anonymous manual download is available; verify the binary against the
+  published SHA-256 before flashing.
+- This is **not** Production OTA firmware and must never be consumed by the
+  Production OTA update path.
+
+**Limitations — explicitly not covered by this release:**
+
+- no branded browser installer yet (separate work package, ADR-0004 §6);
+- no browser or operating-system support claim;
+- no real-hardware validation (Improv/Captive Portal/HA adoption unvalidated
+  on devices);
+- no Customer-Ready or Stable approval;
+- the complete customer journey remains pending.
+
+Publication of any further `onboarding-v<semver>` release happens only
+through its own explicitly authorized publication run (private-source build →
+candidate transfer → draft staging → manual promote).
 
 ## License
 
