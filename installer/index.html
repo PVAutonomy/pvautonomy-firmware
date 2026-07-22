@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="robots" content="noindex" />
+  <title>PVAutonomy Edge101 — Browser Installer (technical preview)</title>
+  <!--
+    WP3-I1 — local browser-installer candidate. Static page intended for the
+    future host https://install.pvautonomy.com/ (ADR-0004 §6, §21).
+
+    This is a TECHNICAL, pre-customer artifact. It is NOT Customer-Ready or
+    Stable, has NOT been validated on real hardware, and makes NO claim about
+    a successful flash, full erase, Wi-Fi provisioning (Improv), captive
+    portal, or Home Assistant adoption.
+
+    The ESP-Web-Tools runtime is fully self-hosted under
+    ./vendor/esp-web-tools/10.4.0/web/ (no CDN / unpkg / jsDelivr). Provenance
+    and checksums: ./vendor/PROVENANCE.md.
+
+    The image flashed is the immutable, published onboarding-v0.1.0 release.
+    The page never copies the manifest or binary, always pins the exact
+    versioned release tag, and never references any legacy update path.
+  -->
+  <style>
+    :root {
+      --bg: #0d1b2a;
+      --panel: #14263b;
+      --panel-2: #1b3350;
+      --ink: #eef4fb;
+      --muted: #a8bed6;
+      --line: #2a476a;
+      --accent: #16a6e9;
+      --warn-bg: #3a2f10;
+      --warn-line: #8a6d16;
+      --warn-ink: #ffe8a3;
+      --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; }
+    body {
+      font: 16px/1.6 system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      color: var(--ink);
+      background: linear-gradient(180deg, #0a1622, var(--bg));
+      min-height: 100vh;
+    }
+    .wrap { max-width: 760px; margin: 0 auto; padding: 40px 20px 72px; }
+    header { display: flex; align-items: center; gap: 14px; margin-bottom: 8px; }
+    .logo {
+      width: 40px; height: 40px; border-radius: 10px; flex: 0 0 auto;
+      background: linear-gradient(135deg, var(--accent), #0e7bb0);
+      display: grid; place-items: center; font-weight: 800; color: #fff;
+    }
+    .brand { font-size: 20px; font-weight: 700; letter-spacing: .2px; }
+    .brand small { display: block; font-size: 13px; font-weight: 500; color: var(--muted); }
+    h1 { font-size: 26px; margin: 22px 0 6px; }
+    p.lead { color: var(--muted); margin-top: 0; }
+    .banner {
+      border: 1px solid var(--warn-line); background: var(--warn-bg); color: var(--warn-ink);
+      border-radius: 12px; padding: 14px 16px; margin: 22px 0; font-size: 14.5px;
+    }
+    .banner strong { color: #fff; }
+    .card {
+      background: var(--panel); border: 1px solid var(--line); border-radius: 16px;
+      padding: 22px; margin: 20px 0;
+    }
+    .card h2 { margin: 0 0 12px; font-size: 17px; }
+    esp-web-install-button { display: inline-block; }
+    .cta {
+      appearance: none; border: 0; cursor: pointer;
+      font: 600 16px/1 system-ui, sans-serif; color: #fff;
+      background: linear-gradient(135deg, var(--accent), #0e7bb0);
+      padding: 14px 26px; border-radius: 999px;
+    }
+    .cta:hover { filter: brightness(1.07); }
+    .hint { color: var(--muted); font-size: 13.5px; margin-top: 12px; }
+    .unsupported-msg { color: var(--warn-ink); font-size: 14.5px; }
+    dl.meta { display: grid; grid-template-columns: max-content 1fr; gap: 8px 16px; margin: 0; }
+    dl.meta dt { color: var(--muted); }
+    dl.meta dd { margin: 0; }
+    code.hash {
+      font-family: var(--mono); font-size: 13px; word-break: break-all;
+      background: var(--panel-2); border: 1px solid var(--line);
+      border-radius: 8px; padding: 2px 8px; display: inline-block;
+    }
+    ul.links { list-style: none; padding: 0; margin: 6px 0 0; }
+    ul.links li { margin: 6px 0; }
+    a { color: var(--accent); }
+    a:hover { text-decoration: underline; }
+    .grid2 { display: grid; grid-template-columns: 1fr; gap: 6px; }
+    footer { color: var(--muted); font-size: 13px; margin-top: 30px; border-top: 1px solid var(--line); padding-top: 16px; }
+    .pill {
+      display: inline-block; font-size: 12px; font-weight: 600; letter-spacing: .3px;
+      color: #cfe8f6; background: var(--panel-2); border: 1px solid var(--line);
+      border-radius: 999px; padding: 3px 10px;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <div class="logo" aria-hidden="true">PV</div>
+      <div class="brand">PVAutonomy<small>Edge101 Onboarding Installer</small></div>
+    </header>
+
+    <span class="pill">Technical preview · not customer-ready</span>
+    <h1>Install the Edge101 Onboarding Image</h1>
+    <p class="lead">
+      Connect your Edge101 device by USB and flash the published PVAutonomy
+      Onboarding Image directly from this page. The same image is used for
+      PVAutonomy&nbsp;Managed and the Open-Source path — no account, no payment,
+      no repository access, and no keys are required.
+    </p>
+
+    <div class="banner">
+      <strong>This is a technical page, not a finished product.</strong>
+      It has not been approved as Customer-Ready or Stable and has not been
+      validated on real hardware. It makes no claim about a successful flash,
+      full erase, Wi-Fi setup, captive portal, or Home Assistant adoption.
+    </div>
+
+    <!-- Flash: exactly one esp-web-install-button, pinned to the immutable
+         onboarding-v0.1.0 serial-install manifest. -->
+    <div class="card">
+      <h2>1 · Flash over USB</h2>
+      <esp-web-install-button
+        manifest="https://github.com/PVAutonomy/pvautonomy-firmware/releases/download/onboarding-v0.1.0/edge101-onboarding-0.1.0.manifest.json">
+        <button class="cta" slot="activate">Connect &amp; install</button>
+        <span slot="unsupported" class="unsupported-msg">
+          This browser did not provide the Web&nbsp;Serial API on this page, so
+          in-browser installation is unavailable here. You can download the
+          image and flash it yourself using the links in section&nbsp;3 below.
+        </span>
+        <span slot="not-allowed" class="unsupported-msg">
+          In-browser installation requires a secure context (HTTPS or
+          localhost). You can download the image manually in section&nbsp;3
+          below.
+        </span>
+      </esp-web-install-button>
+      <p class="hint" id="serial-note" hidden>
+        The Web&nbsp;Serial API is not available in this environment. Use the
+        manual download in section&nbsp;3.
+      </p>
+      <p class="hint">
+        In-browser installation uses the Web&nbsp;Serial API. If your computer
+        does not detect a serial device, you may need a USB-to-UART driver:
+        <a href="https://www.silabs.com/developers/usb-to-uart-bridge-vcp-drivers" rel="noopener noreferrer" target="_blank">CP210x (Silicon Labs)</a>
+        · <a href="https://www.wch.cn/downloads/CH341SER_ZIP.html" rel="noopener noreferrer" target="_blank">CH340 (WCH)</a>.
+      </p>
+    </div>
+
+    <!-- Exactly what will be flashed: version + full SHA-256, shown before install. -->
+    <div class="card">
+      <h2>2 · What this installs</h2>
+      <dl class="meta">
+        <dt>Image</dt><dd>PVAutonomy Edge101 Onboarding Image</dd>
+        <dt>Version</dt><dd><strong>0.1.0</strong></dd>
+        <dt>SHA-256</dt>
+        <dd><code class="hash">879afa1528c97548ed0ed82a859f408611a6c871fc3a97492f7d52dcb01cb9c1</code></dd>
+      </dl>
+      <p class="hint">
+        Verify the downloaded binary against this SHA-256 before flashing. This
+        image is public and secret-free.
+      </p>
+    </div>
+
+    <!-- Canonical, immutable release links (release page + 4 assets), version-pinned. -->
+    <div class="card">
+      <h2>3 · Release &amp; manual download</h2>
+      <p class="hint" style="margin-top:0">
+        Everything above comes from the immutable, published release. Prefer the
+        in-browser installer in section&nbsp;1; the direct links are provided for
+        manual verification and for browsers without the Web&nbsp;Serial API.
+      </p>
+      <div class="grid2">
+        <ul class="links">
+          <li>Release page:
+            <a href="https://github.com/PVAutonomy/pvautonomy-firmware/releases/tag/onboarding-v0.1.0" rel="noopener noreferrer" target="_blank">onboarding-v0.1.0</a>
+          </li>
+          <li>Firmware image:
+            <a href="https://github.com/PVAutonomy/pvautonomy-firmware/releases/download/onboarding-v0.1.0/edge101-onboarding-0.1.0.factory.bin" rel="noopener noreferrer" target="_blank">edge101-onboarding-0.1.0.factory.bin</a>
+          </li>
+          <li>Checksum:
+            <a href="https://github.com/PVAutonomy/pvautonomy-firmware/releases/download/onboarding-v0.1.0/edge101-onboarding-0.1.0.factory.bin.sha256" rel="noopener noreferrer" target="_blank">edge101-onboarding-0.1.0.factory.bin.sha256</a>
+          </li>
+          <li>Metadata:
+            <a href="https://github.com/PVAutonomy/pvautonomy-firmware/releases/download/onboarding-v0.1.0/edge101-onboarding-0.1.0.metadata.json" rel="noopener noreferrer" target="_blank">edge101-onboarding-0.1.0.metadata.json</a>
+          </li>
+        </ul>
+      </div>
+    </div>
+
+    <footer>
+      PVAutonomy Edge101 · Onboarding Image 0.1.0 (technical preview).
+      In-browser flashing is provided by self-hosted
+      <a href="vendor/PROVENANCE.md">ESP-Web-Tools (Apache-2.0, pinned 10.4.0)</a>.
+      This page collects no data and contains no forms or tracking.
+    </footer>
+  </div>
+
+  <!-- Self-hosted runtime: no CDN / unpkg / jsDelivr. Defines <esp-web-install-button>. -->
+  <script type="module" src="vendor/esp-web-tools/10.4.0/web/install-button.js"></script>
+
+  <!-- Neutral Web Serial feature detection: reveal a neutral note when absent. -->
+  <script type="module">
+    if (!("serial" in navigator)) {
+      const note = document.getElementById("serial-note");
+      if (note) note.hidden = false;
+    }
+  </script>
+</body>
+</html>
