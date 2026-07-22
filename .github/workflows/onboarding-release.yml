@@ -1,0 +1,437 @@
+# Onboarding Image release publisher (PD-13 / ADR-0004 §§5, 7, 21 — WP2-B).
+#
+# Trust boundary: the private canonical source repository is the only build
+# authority; this public repository never checks it out and never receives a
+# private-source token. A four-file release candidate is built there at the
+# exact descriptor-pinned source commit, and the separate, explicitly
+# authorized WP2-C ceremony transfers it here as an exact draft release.
+#
+# pull_request runs are VALIDATION-ONLY: publisher contract tests plus
+# descriptor validation. They build nothing and can never publish.
+#
+# The manual workflow_dispatch job never creates a draft, release, tag, or
+# asset. It only verifies an already staged, exact, validated draft release
+# and promotes it with a single PATCH (draft=false, make_latest=false).
+# Historical/legacy releases and the Pages branch are never addressed.
+
+name: Onboarding Image release publisher
+
+on:
+  pull_request:
+    paths:
+      - README.md
+      - onboarding/releases/0.1.0.json
+      - scripts/validate_onboarding_release_descriptor.py
+      - tests/test_onboarding_release_contract.py
+      - .github/workflows/onboarding-release.yml
+  workflow_dispatch:
+    inputs:
+      confirm_release:
+        description: "Type exactly: PUBLISH onboarding-v0.1.0"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: onboarding-release-0.1.0
+  cancel-in-progress: false
+
+env:
+  DESCRIPTOR: onboarding/releases/0.1.0.json
+  RELEASE_TAG: onboarding-v0.1.0
+  RELEASE_TITLE: PVAutonomy Edge101 Onboarding Image 0.1.0
+  REQUIRED_CONFIRMATION: PUBLISH onboarding-v0.1.0
+
+jobs:
+  validate-contract:
+    name: Validate Onboarding publisher contract
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate dispatch confirmation (dispatch only)
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          CONFIRM: ${{ inputs.confirm_release }}
+        run: |
+          if [ "${CONFIRM}" != "${REQUIRED_CONFIRMATION}" ]; then
+            echo "FATAL: confirm_release must be exactly '${REQUIRED_CONFIRMATION}'" >&2
+            exit 1
+          fi
+
+      - name: Checkout publisher repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Bind validation to the checked-out publisher commit
+        run: |
+          checked_out="$(git rev-parse HEAD)"
+          echo "checked-out publisher commit: ${checked_out}"
+          if ! printf '%s' "${checked_out}" | grep -Eq '^[0-9a-f]{40}$'; then
+            echo "FATAL: git rev-parse HEAD is not a 40-char lowercase hex SHA" >&2
+            exit 1
+          fi
+          if [ "${checked_out}" != "${GITHUB_SHA}" ]; then
+            echo "FATAL: checked-out commit does not match GITHUB_SHA" >&2
+            exit 1
+          fi
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
+        with:
+          python-version: "3.11"
+
+      - name: Install publisher validation dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pytest "PyYAML>=6,<7"
+
+      - name: Run publisher contract tests
+        run: python -m pytest -q -p no:cacheprovider tests/test_onboarding_release_contract.py
+
+      - name: Validate release descriptor
+        run: |
+          python scripts/validate_onboarding_release_descriptor.py \
+            --descriptor "${DESCRIPTOR}"
+
+      - name: Verify no tracked files were modified
+        run: git diff --exit-code
+
+  publish:
+    name: Promote staged Onboarding draft (manual dispatch only)
+    if: github.event_name == 'workflow_dispatch'
+    needs: validate-contract
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout publisher repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Fail closed unless every publication precondition holds
+        env:
+          CONFIRM: ${{ inputs.confirm_release }}
+          EVENT_NAME: ${{ github.event_name }}
+          REPOSITORY: ${{ github.repository }}
+          REF: ${{ github.ref }}
+        run: |
+          if [ "${EVENT_NAME}" != "workflow_dispatch" ]; then
+            echo "FATAL: publish is only reachable via workflow_dispatch" >&2
+            exit 1
+          fi
+          if [ "${REPOSITORY}" != "PVAutonomy/pvautonomy-firmware" ]; then
+            echo "FATAL: wrong repository ${REPOSITORY}" >&2
+            exit 1
+          fi
+          if [ "${REF}" != "refs/heads/main" ]; then
+            echo "FATAL: publication is only authorized from refs/heads/main, got ${REF}" >&2
+            exit 1
+          fi
+          if [ "${CONFIRM}" != "${REQUIRED_CONFIRMATION}" ]; then
+            echo "FATAL: confirm_release must be exactly '${REQUIRED_CONFIRMATION}'" >&2
+            exit 1
+          fi
+          checked_out="$(git rev-parse HEAD)"
+          if [ "${checked_out}" != "${GITHUB_SHA}" ]; then
+            echo "FATAL: checked-out publisher commit does not match GITHUB_SHA" >&2
+            exit 1
+          fi
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
+        with:
+          python-version: "3.11"
+
+      - name: Re-validate release descriptor
+        run: |
+          python scripts/validate_onboarding_release_descriptor.py \
+            --descriptor "${DESCRIPTOR}"
+
+      - name: Refuse a pre-existing tag or published release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if git ls-remote --exit-code origin "refs/tags/${RELEASE_TAG}" >/dev/null 2>&1; then
+            echo "FATAL: tag ${RELEASE_TAG} already exists — nothing may be republished or replaced" >&2
+            exit 1
+          fi
+          published="$(gh api "repos/${GITHUB_REPOSITORY}/releases" --paginate \
+            --jq "[.[] | select(.tag_name == \"${RELEASE_TAG}\" and .draft == false)] | length")"
+          if [ "${published}" != "0" ]; then
+            echo "FATAL: a published release with tag ${RELEASE_TAG} already exists" >&2
+            exit 1
+          fi
+
+      - name: Capture pre-publication latest release identity
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh api "repos/${GITHUB_REPOSITORY}/releases/latest" \
+              > "${RUNNER_TEMP}/latest-before.json" 2> "${RUNNER_TEMP}/latest-before.err"; then
+            latest_id="$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["id"])' "${RUNNER_TEMP}/latest-before.json")"
+            latest_tag="$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["tag_name"])' "${RUNNER_TEMP}/latest-before.json")"
+            if [ -z "${latest_id}" ] || [ -z "${latest_tag}" ]; then
+              echo "FATAL: malformed /releases/latest response" >&2
+              exit 1
+            fi
+          elif grep -q "HTTP 404" "${RUNNER_TEMP}/latest-before.err"; then
+            latest_id="none"
+            latest_tag="none"
+          else
+            echo "FATAL: could not determine the pre-publication latest release:" >&2
+            cat "${RUNNER_TEMP}/latest-before.err" >&2
+            exit 1
+          fi
+          echo "pre-publication latest release: id=${latest_id} tag=${latest_tag}"
+          echo "PRE_LATEST_ID=${latest_id}" >> "${GITHUB_ENV}"
+          echo "PRE_LATEST_TAG=${latest_tag}" >> "${GITHUB_ENV}"
+
+      - name: Require exactly one staged draft bound to this commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api "repos/${GITHUB_REPOSITORY}/releases" --paginate \
+            > "${RUNNER_TEMP}/releases-before.json"
+          python - "${RUNNER_TEMP}/releases-before.json" <<'EOF'
+          import json
+          import os
+          import sys
+          from pathlib import Path
+
+          release_tag = os.environ["RELEASE_TAG"]
+          release_title = os.environ["RELEASE_TITLE"]
+          github_sha = os.environ["GITHUB_SHA"]
+          releases = json.loads(Path(sys.argv[1]).read_text())
+          matching = [r for r in releases if r.get("tag_name") == release_tag]
+          errors = []
+          if len(matching) != 1:
+              errors.append(
+                  f"expected exactly one staged {release_tag} release, found {len(matching)} — "
+                  "the WP2-C ceremony must stage exactly one draft first"
+              )
+          else:
+              draft = matching[0]
+              if draft.get("draft") is not True:
+                  errors.append("the staged release is not a draft")
+              if draft.get("prerelease") is not False:
+                  errors.append("the staged draft is marked prerelease")
+              if draft.get("name") != release_title:
+                  errors.append(f"wrong draft title {draft.get('name')!r}")
+              if draft.get("target_commitish") != github_sha:
+                  errors.append(
+                      f"draft target_commitish {draft.get('target_commitish')!r} is not "
+                      f"bound to the verified publisher commit {github_sha}"
+                  )
+              asset_names = sorted(a.get("name") for a in draft.get("assets", []))
+              expected = sorted([
+                  "edge101-onboarding-0.1.0.factory.bin",
+                  "edge101-onboarding-0.1.0.factory.bin.sha256",
+                  "edge101-onboarding-0.1.0.manifest.json",
+                  "edge101-onboarding-0.1.0.metadata.json",
+              ])
+              if asset_names != expected:
+                  errors.append(f"draft asset names {asset_names} != required {expected}")
+          if errors:
+              print("FATAL: staged-draft preconditions failed:", file=sys.stderr)
+              for error in errors:
+                  print(f"  - {error}", file=sys.stderr)
+              raise SystemExit(1)
+          draft = matching[0]
+          out = Path(os.environ["GITHUB_ENV"])
+          with out.open("a", encoding="utf-8") as handle:
+              handle.write(f"RELEASE_ID={draft['id']}\n")
+          Path(sys.argv[1]).with_name("draft.json").write_text(json.dumps(draft))
+          print(f"staged draft verified: id={draft['id']} tag={release_tag}")
+          EOF
+
+      - name: Download the four staged draft assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p candidate
+          python - "${RUNNER_TEMP}/draft.json" > "${RUNNER_TEMP}/asset-list.txt" <<'EOF'
+          import json
+          import sys
+          from pathlib import Path
+
+          draft = json.loads(Path(sys.argv[1]).read_text())
+          for asset in draft.get("assets", []):
+              print(f"{asset['id']}\t{asset['name']}")
+          EOF
+          while IFS="$(printf '\t')" read -r asset_id asset_name; do
+            gh api -H "Accept: application/octet-stream" \
+              "repos/${GITHUB_REPOSITORY}/releases/assets/${asset_id}" \
+              > "candidate/${asset_name}"
+            if [ ! -s "candidate/${asset_name}" ]; then
+              echo "FATAL: downloaded asset ${asset_name} is empty" >&2
+              exit 1
+            fi
+          done < "${RUNNER_TEMP}/asset-list.txt"
+          count="$(find candidate -type f | wc -l)"
+          if [ "${count}" -ne 4 ]; then
+            echo "FATAL: candidate contains ${count} files, expected exactly 4" >&2
+            exit 1
+          fi
+
+      - name: Validate downloaded candidate against the descriptor
+        run: |
+          python scripts/validate_onboarding_release_descriptor.py \
+            --descriptor "${DESCRIPTOR}" \
+            --bundle-dir candidate
+
+      - name: Verify draft asset sizes and digests against downloads
+        run: |
+          python - "${RUNNER_TEMP}/draft.json" candidate <<'EOF'
+          import hashlib
+          import json
+          import sys
+          from pathlib import Path
+
+          draft = json.loads(Path(sys.argv[1]).read_text())
+          candidate = Path(sys.argv[2])
+          local = {p.name: p for p in candidate.iterdir() if p.is_file()}
+          assets = {a["name"]: a for a in draft.get("assets", [])}
+          errors = []
+          if sorted(assets) != sorted(local):
+              errors.append(f"asset names {sorted(assets)} != local {sorted(local)}")
+          for name, asset in assets.items():
+              path = local.get(name)
+              if path is None:
+                  continue
+              if asset.get("size") != path.stat().st_size:
+                  errors.append(f"{name}: draft size {asset.get('size')} != local {path.stat().st_size}")
+              digest = asset.get("digest")
+              if digest:
+                  local_sha = hashlib.sha256(path.read_bytes()).hexdigest()
+                  if digest != f"sha256:{local_sha}":
+                      errors.append(f"{name}: draft digest {digest} != local sha256:{local_sha}")
+          if errors:
+              print("FATAL: draft asset verification failed:", file=sys.stderr)
+              for error in errors:
+                  print(f"  - {error}", file=sys.stderr)
+              print("The staged draft was left unpublished for Planner inspection.", file=sys.stderr)
+              raise SystemExit(1)
+          print("draft assets verified: names, sizes, and available digests match")
+          EOF
+
+      - name: Promote the verified draft (single PATCH, make_latest=false)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api -X PATCH "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}" \
+            -F draft=false \
+            -F prerelease=false \
+            -f make_latest=false \
+            --jq '{id, tag_name, draft, html_url}'
+
+      - name: Verify published release state (fail closed, read-only)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api "repos/${GITHUB_REPOSITORY}/releases" --paginate \
+            > "${RUNNER_TEMP}/releases-after.json"
+          gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${RELEASE_TAG}" \
+            > "${RUNNER_TEMP}/tag-after.json"
+          if gh api "repos/${GITHUB_REPOSITORY}/releases/latest" \
+              > "${RUNNER_TEMP}/latest-after.json" 2> "${RUNNER_TEMP}/latest-after.err"; then
+            :
+          elif grep -q "HTTP 404" "${RUNNER_TEMP}/latest-after.err"; then
+            printf '{"id": "none", "tag_name": "none"}' > "${RUNNER_TEMP}/latest-after.json"
+          else
+            echo "FATAL: could not read post-publication latest release" >&2
+            cat "${RUNNER_TEMP}/latest-after.err" >&2
+            exit 1
+          fi
+          python - "${RUNNER_TEMP}" candidate <<'EOF'
+          import hashlib
+          import json
+          import os
+          import sys
+          from pathlib import Path
+
+          temp = Path(sys.argv[1])
+          candidate = Path(sys.argv[2])
+          release_tag = os.environ["RELEASE_TAG"]
+          release_title = os.environ["RELEASE_TITLE"]
+          github_sha = os.environ["GITHUB_SHA"]
+          pre_latest_id = os.environ["PRE_LATEST_ID"]
+          pre_latest_tag = os.environ["PRE_LATEST_TAG"]
+          errors = []
+
+          releases = json.loads((temp / "releases-after.json").read_text())
+          matching = [r for r in releases if r.get("tag_name") == release_tag]
+          if len(matching) != 1:
+              errors.append(f"expected exactly one {release_tag} release, found {len(matching)}")
+              release = None
+          else:
+              release = matching[0]
+              if release.get("draft") is not False:
+                  errors.append("release is still a draft")
+              if release.get("prerelease") is not False:
+                  errors.append("release is marked prerelease")
+              if not release.get("published_at"):
+                  errors.append("release published_at is empty")
+              if release.get("name") != release_title:
+                  errors.append(f"wrong release title {release.get('name')!r}")
+              if release.get("tag_name") != release_tag:
+                  errors.append(f"wrong release tag {release.get('tag_name')!r}")
+
+          tag_ref = json.loads((temp / "tag-after.json").read_text())
+          tag_object = tag_ref.get("object", {})
+          if tag_object.get("type") != "commit" or tag_object.get("sha") != github_sha:
+              errors.append(
+                  f"tag {release_tag} resolves to {tag_object.get('type')}:"
+                  f"{tag_object.get('sha')} instead of commit:{github_sha}"
+              )
+
+          local = {p.name: p for p in candidate.iterdir() if p.is_file()}
+          asset_report = []
+          if release is not None:
+              assets = {a["name"]: a for a in release.get("assets", [])}
+              if sorted(assets) != sorted(local):
+                  errors.append(f"asset names {sorted(assets)} != local {sorted(local)}")
+              for name, asset in assets.items():
+                  path = local.get(name)
+                  if path is None:
+                      continue
+                  if asset.get("size") != path.stat().st_size:
+                      errors.append(
+                          f"{name}: published size {asset.get('size')} != "
+                          f"local {path.stat().st_size}"
+                      )
+                  local_sha = hashlib.sha256(path.read_bytes()).hexdigest()
+                  digest = asset.get("digest")
+                  if digest and digest != f"sha256:{local_sha}":
+                      errors.append(f"{name}: published digest {digest} != sha256:{local_sha}")
+                  asset_report.append(f"{name} ({asset.get('size')} bytes, {digest or 'no digest'})")
+
+          latest_after = json.loads((temp / "latest-after.json").read_text())
+          after_id = str(latest_after.get("id"))
+          after_tag = str(latest_after.get("tag_name"))
+          if after_id != pre_latest_id or after_tag != pre_latest_tag:
+              errors.append(
+                  f"latest release changed: before id={pre_latest_id} tag={pre_latest_tag}, "
+                  f"after id={after_id} tag={after_tag} — make_latest=false was violated"
+              )
+
+          if errors:
+              print("FATAL: post-publication verification failed:", file=sys.stderr)
+              for error in errors:
+                  print(f"  - {error}", file=sys.stderr)
+              print(
+                  "INCIDENT: release may already be public — "
+                  "Planner-led incident review required. "
+                  "Nothing was deleted, rewritten, replaced, or silently "
+                  "repaired by this verification.",
+                  file=sys.stderr,
+              )
+              raise SystemExit(1)
+
+          print(f"published release verified: tag={release_tag} id={release['id']}")
+          for line in asset_report:
+              print(f"  asset: {line}")
+          print(f"latest release unchanged: id={pre_latest_id} tag={pre_latest_tag}")
+          EOF
