@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "artifact_class": "onboarding_serial",
+  "version": "0.1.0",
+  "release_tag": "onboarding-v0.1.0",
+  "release_page_url": "https://github.com/PVAutonomy/pvautonomy-firmware/releases/tag/onboarding-v0.1.0",
+  "manifest_name": "edge101-onboarding-0.1.0.manifest.json",
+  "manifest_url": "https://github.com/PVAutonomy/pvautonomy-firmware/releases/download/onboarding-v0.1.0/edge101-onboarding-0.1.0.manifest.json",
+  "manifest_size": 439,
+  "manifest_sha256": "139916b5e4d337879c0efa0197880f00c4d4e8bf8882de9b5ce1d963e0da3864",
+  "manifest_version_field": "0.1.0",
+  "image_name": "edge101-onboarding-0.1.0.factory.bin",
+  "image_url": "https://github.com/PVAutonomy/pvautonomy-firmware/releases/download/onboarding-v0.1.0/edge101-onboarding-0.1.0.factory.bin",
+  "image_size": 1156480,
+  "image_sha256": "879afa1528c97548ed0ed82a859f408611a6c871fc3a97492f7d52dcb01cb9c1",
+  "serving_dir": "firmware/onboarding-0.1.0",
+  "serving_manifest_path": "firmware/onboarding-0.1.0/edge101-onboarding-0.1.0.manifest.json",
+  "serving_image_path": "firmware/onboarding-0.1.0/edge101-onboarding-0.1.0.factory.bin",
+  "absolute_image_url_token": "https://github.com/PVAutonomy/pvautonomy-firmware/releases/download/onboarding-v0.1.0/edge101-onboarding-0.1.0.factory.bin",
+  "relative_image_token": "./edge101-onboarding-0.1.0.factory.bin",
+  "substitution_count": 1,
+  "builds_count": 1,
+  "parts_count": 1,
+  "chip_family": "ESP32",
+  "offset": 0,
+  "redirect_host_allowlist": [
+    "github.com",
+    "objects.githubusercontent.com",
+    "release-assets.githubusercontent.com"
+  ]
+}
