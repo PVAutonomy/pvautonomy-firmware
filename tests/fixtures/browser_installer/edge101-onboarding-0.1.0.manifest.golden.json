@@ -1,0 +1,18 @@
+{
+  "name": "PVAutonomy Edge101 Onboarding",
+  "version": "0.1.0",
+  "manifest_version": 1,
+  "home_assistant_domain": "esphome",
+  "new_install_prompt_erase": false,
+  "builds": [
+    {
+      "chipFamily": "ESP32",
+      "parts": [
+        {
+          "path": "https://github.com/PVAutonomy/pvautonomy-firmware/releases/download/onboarding-v0.1.0/edge101-onboarding-0.1.0.factory.bin",
+          "offset": 0
+        }
+      ]
+    }
+  ]
+}

@@ -96,6 +96,16 @@ RELEASE_PAGE_URL = (
 SHA256 = "879afa1528c97548ed0ed82a859f408611a6c871fc3a97492f7d52dcb01cb9c1"
 VERSION = "0.1.0"
 
+# ADR-0004 §6.1 verified same-origin serving: the button consumes the
+# deploy-time-staged serving manifest, never the GitHub URL directly.
+SERVING_MANIFEST_PATH = (
+    "/firmware/onboarding-0.1.0/edge101-onboarding-0.1.0.manifest.json"
+)
+HEADERS_PATH = INSTALLER_DIR / "_headers"
+ASSETS_DIR = INSTALLER_DIR / "assets"
+CSS_PATH = ASSETS_DIR / "installer.css"
+SERIAL_JS_PATH = ASSETS_DIR / "serial-support.js"
+
 
 class _Collector(HTMLParser):
     """Collect the structural facts the contract depends on."""
@@ -104,23 +114,60 @@ class _Collector(HTMLParser):
         super().__init__(convert_charrefs=True)
         self.install_buttons: list[dict] = []
         self.scripts: list[dict] = []
+        self.stylesheets: list[str] = []
+        self.style_tags = 0
+        self.style_attrs: list[tuple[str, str]] = []
+        self.event_handler_attrs: list[tuple[str, str]] = []
         self.forms = 0
         self.inputs = 0
+        self.anchors: list[dict] = []  # {"href":…, "section":last-h2-text}
         self._text: list[str] = []
+        self._in_h2 = False
+        self._current_section = ""
+        self._script_depth = 0
+        self.inline_script_chunks: list[str] = []
 
     def handle_starttag(self, tag, attrs):
         a = dict(attrs)
+        for name, value in attrs:
+            if name == "style":
+                self.style_attrs.append((tag, value or ""))
+            if name.startswith("on"):
+                self.event_handler_attrs.append((tag, name))
         if tag == "esp-web-install-button":
             self.install_buttons.append(a)
         elif tag == "script":
             self.scripts.append(a)
+            if "src" not in a:
+                self._script_depth += 1
+        elif tag == "style":
+            self.style_tags += 1
+        elif tag == "link" and a.get("rel") == "stylesheet":
+            self.stylesheets.append(a.get("href", ""))
         elif tag == "form":
             self.forms += 1
         elif tag in ("input", "textarea", "select"):
             self.inputs += 1
+        elif tag == "h2":
+            self._in_h2 = True
+            self._current_section = ""
+        elif tag == "a":
+            self.anchors.append(
+                {"href": a.get("href", ""), "section": self._current_section}
+            )
+
+    def handle_endtag(self, tag):
+        if tag == "h2":
+            self._in_h2 = False
+        elif tag == "script" and self._script_depth:
+            self._script_depth -= 1
 
     def handle_data(self, data):
         self._text.append(data)
+        if self._in_h2:
+            self._current_section += data
+        if self._script_depth and data.strip():
+            self.inline_script_chunks.append(data)
 
     @property
     def text(self) -> str:
@@ -154,15 +201,42 @@ def test_exactly_one_install_button():
     assert len(DOM.install_buttons) == 1
 
 
-def test_button_manifest_is_the_immutable_release_manifest():
+def test_button_manifest_is_the_same_origin_serving_path():
+    # ADR-0004 §6.1(b): the button consumes the same-origin serving manifest.
     (button,) = DOM.install_buttons
-    assert button.get("manifest") == MANIFEST_URL
+    assert button.get("manifest") == SERVING_MANIFEST_PATH
+
+
+def test_button_manifest_is_not_the_github_release_url():
+    (button,) = DOM.install_buttons
+    assert button.get("manifest") != MANIFEST_URL
+    assert not button.get("manifest", "").startswith("https://")
 
 
 def test_only_one_manifest_attribute_on_the_page():
     # No hidden second manifest / no per-audience manifest.
     assert PAGE.count('manifest="') == 1
+    assert PAGE.count(SERVING_MANIFEST_PATH) == 1
+
+
+def test_published_manifest_url_remains_a_manual_link():
+    # The published manifest stays visible as a canonical release link —
+    # exactly once, and only as a manual-download anchor (not the button).
     assert PAGE.count(MANIFEST_URL) == 1
+    manual_anchors = [a for a in DOM.anchors if a["href"] == MANIFEST_URL]
+    assert len(manual_anchors) == 1
+
+
+def test_release_links_live_in_the_manual_download_section():
+    # Structural: the five canonical release links must be real anchors in
+    # the "Release & manual download" card — not comments or hidden text.
+    section_anchors = {
+        a["href"]
+        for a in DOM.anchors
+        if "release" in a["section"].lower() and "download" in a["section"].lower()
+    }
+    for url in (RELEASE_PAGE_URL, IMAGE_URL, CHECKSUM_URL, METADATA_URL, MANIFEST_URL):
+        assert url in section_anchors, f"missing manual-download anchor: {url}"
 
 
 # ---------------------------------------------------------------------------
@@ -380,28 +454,172 @@ def test_no_forms_or_input_fields():
 
 
 def test_no_analytics_or_telemetry():
-    lowered = PAGE.lower()
-    for needle in (
-        "google-analytics",
-        "googletagmanager",
-        "gtag(",
-        "plausible",
-        "segment.io",
-        "sentry",
-        "fetch(",
-        "xmlhttprequest",
-        "navigator.sendbeacon",
-    ):
-        assert needle not in lowered, f"forbidden telemetry/network call: {needle}"
+    surfaces = {
+        "index.html": PAGE.lower(),
+        "assets/installer.css": CSS_PATH.read_text(encoding="utf-8").lower(),
+        "assets/serial-support.js": SERIAL_JS_PATH.read_text(encoding="utf-8").lower(),
+    }
+    for surface, lowered in surfaces.items():
+        for needle in (
+            "google-analytics",
+            "googletagmanager",
+            "gtag(",
+            "plausible",
+            "segment.io",
+            "sentry",
+            "fetch(",
+            "xmlhttprequest",
+            "navigator.sendbeacon",
+        ):
+            assert needle not in lowered, f"{surface}: forbidden call: {needle}"
 
 
 # ---------------------------------------------------------------------------
-# Web Serial feature detection
+# No inline code (CSP: script-src 'self'; style-src 'self')
+# ---------------------------------------------------------------------------
+
+
+def test_no_inline_style_blocks():
+    assert DOM.style_tags == 0
+
+
+def test_no_style_attributes():
+    assert DOM.style_attrs == []
+
+
+def test_no_inline_event_handlers():
+    assert DOM.event_handler_attrs == []
+
+
+def test_no_inline_scripts():
+    assert DOM.inline_script_chunks == []
+    for script in DOM.scripts:
+        assert script.get("src"), "script tag without src (inline) is forbidden"
+
+
+def test_local_stylesheet_and_scripts_exist_and_are_referenced():
+    assert DOM.stylesheets == ["assets/installer.css"]
+    assert CSS_PATH.is_file() and CSS_PATH.stat().st_size > 0
+    assert SERIAL_JS_PATH.is_file() and SERIAL_JS_PATH.stat().st_size > 0
+    srcs = [s.get("src") for s in DOM.scripts]
+    assert "assets/serial-support.js" in srcs
+
+
+# ---------------------------------------------------------------------------
+# Web Serial feature detection (external, neutral)
 # ---------------------------------------------------------------------------
 
 
 def test_web_serial_feature_detection_present():
-    assert '"serial" in navigator' in PAGE or "'serial' in navigator" in PAGE
+    js = SERIAL_JS_PATH.read_text(encoding="utf-8")
+    assert '"serial" in navigator' in js or "'serial' in navigator" in js
+    lowered = js.lower()
+    for needle in ("supported browser", "windows", "macos", "linux", "chrome only"):
+        assert needle not in lowered, f"support claim in feature detection: {needle}"
+
+
+# ---------------------------------------------------------------------------
+# Repository hygiene: no firmware binary anywhere in the tree
+# ---------------------------------------------------------------------------
+
+
+def test_no_bin_file_anywhere_in_tree():
+    offenders = [
+        p.relative_to(REPO_ROOT).as_posix()
+        for p in REPO_ROOT.rglob("*.bin")
+        if ".git" not in p.parts
+    ]
+    assert offenders == [], f".bin files are forbidden in the tree: {offenders}"
+
+
+# ---------------------------------------------------------------------------
+# _headers contract (CSP / Permissions-Policy / HSTS / caching)
+# ---------------------------------------------------------------------------
+
+
+def _parse_headers_file() -> dict[str, dict[str, str]]:
+    blocks: dict[str, dict[str, str]] = {}
+    current: dict[str, str] | None = None
+    for line in HEADERS_PATH.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        if not line.startswith((" ", "\t")):
+            current = {}
+            blocks[line.strip()] = current
+        else:
+            assert current is not None, f"header line before any path: {line!r}"
+            name, _, value = line.strip().partition(":")
+            current[name.strip()] = value.strip()
+    return blocks
+
+
+HEADER_BLOCKS = _parse_headers_file()
+
+
+def test_headers_file_has_expected_blocks():
+    assert set(HEADER_BLOCKS) == {"/*", "/vendor/*", "/firmware/*"}
+
+
+def test_csp_directives_exact():
+    csp = HEADER_BLOCKS["/*"]["Content-Security-Policy"]
+    directives = {}
+    for chunk in csp.split(";"):
+        chunk = chunk.strip()
+        if not chunk:
+            continue
+        name, _, value = chunk.partition(" ")
+        directives[name] = value.strip()
+    assert directives["default-src"] == "'none'"
+    assert directives["script-src"] == "'self'"
+    assert directives["style-src"] == "'self'"
+    assert directives["img-src"] == "'self' data:"
+    assert directives["connect-src"] == "'self'", "connect-src must be exactly 'self'"
+    assert directives["manifest-src"] == "'self'"
+    assert directives["base-uri"] == "'none'"
+    assert directives["form-action"] == "'none'"
+    assert directives["frame-ancestors"] == "'none'"
+    assert directives["object-src"] == "'none'"
+    assert "upgrade-insecure-requests" in directives
+    assert "unsafe-inline" not in csp
+    assert "unsafe-eval" not in csp
+    for host in ("github.com", "githubusercontent", "unpkg", "jsdelivr", "cdn"):
+        assert host not in csp, f"external host in CSP: {host}"
+
+
+def test_permissions_policy_allows_serial_for_self_only():
+    policy = HEADER_BLOCKS["/*"]["Permissions-Policy"]
+    assert "serial=(self)" in policy
+    assert "serial=()" not in policy
+    for token in ("usb=()", "geolocation=()", "camera=()", "microphone=()", "payment=()"):
+        assert token in policy, f"missing Permissions-Policy token: {token}"
+    assert "fullscreen=(self)" in policy
+
+
+def test_security_headers_present():
+    root = HEADER_BLOCKS["/*"]
+    assert root["X-Content-Type-Options"] == "nosniff"
+    assert root["Referrer-Policy"] == "strict-origin-when-cross-origin"
+    assert root["X-Frame-Options"] == "DENY"
+
+
+def test_hsts_scoped_to_host_only():
+    hsts = HEADER_BLOCKS["/*"]["Strict-Transport-Security"]
+    assert hsts == "max-age=15552000"
+    assert "includeSubDomains" not in hsts
+    assert "preload" not in hsts
+
+
+def test_cache_rules_only_for_versioned_paths():
+    assert (
+        HEADER_BLOCKS["/vendor/*"]["Cache-Control"]
+        == "public, max-age=31536000, immutable"
+    )
+    assert (
+        HEADER_BLOCKS["/firmware/*"]["Cache-Control"]
+        == "public, max-age=31536000, immutable"
+    )
+    # HTML / unversioned assets must not be immutable-cached.
+    assert "Cache-Control" not in HEADER_BLOCKS["/*"]
 
 
 # ---------------------------------------------------------------------------
@@ -514,3 +732,11 @@ def test_local_http_mime_smoke():
         # install-button.js explicitly reachable and served.
         ctype, _ = _fetch(opener, base + "/" + WEB_URL_PREFIX + ROOT_MODULE)
         assert ctype in _JS_CONTENT_TYPES
+
+        # External page assets (CSP externalization) are served correctly.
+        ctype, data = _fetch(opener, base + "/assets/installer.css")
+        assert ctype == "text/css"
+        assert data == CSS_PATH.read_bytes()
+        ctype, data = _fetch(opener, base + "/assets/serial-support.js")
+        assert ctype in _JS_CONTENT_TYPES
+        assert data == SERIAL_JS_PATH.read_bytes()
