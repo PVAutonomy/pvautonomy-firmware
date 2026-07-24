@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "activation_env_var": "PVA_INSTALL_HOST_MONITOR_STATE",
+  "targets": [
+    {
+      "name": "pages-production",
+      "base_url": "https://pvautonomy-installer.pages.dev",
+      "always_active": true
+    },
+    {
+      "name": "stable-install",
+      "base_url": "https://install.pvautonomy.com",
+      "always_active": false
+    }
+  ]
+}

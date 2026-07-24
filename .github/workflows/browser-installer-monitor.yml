@@ -1,0 +1,92 @@
+# WP3-M1 — fail-closed browser-installer monitor (ADR-0004 §6.2).
+#
+# pull_request runs ONLY the network-free contract/unit tests.
+# push-to-main / schedule / manual dispatch additionally run exactly one real
+# read-only monitor pass. The stable-host activation state comes exclusively
+# from the repository variable PVA_INSTALL_HOST_MONITOR_STATE — deliberately
+# WITHOUT any default: an empty value must reach the tool and fail closed
+# there. A separate gate sets the variable to "disabled" before this
+# workflow is activated; only the final WP3-N1B step may set "enabled".
+#
+# The monitor never mutates anything: no deploy, no release/tag/asset touch,
+# no DNS, no Cloudflare API write, no secrets.
+name: Browser installer monitor
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/browser-installer-monitor.yml"
+      - "installer/**"
+      - "tools/browser_installer/**"
+      - "tests/test_browser_installer_monitor.py"
+      - "tests/test_browser_installer_contract.py"
+      - "tests/test_browser_installer_staging.py"
+      - "tests/fixtures/browser_installer/**"
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/browser-installer-monitor.yml"
+      - "installer/**"
+      - "tools/browser_installer/**"
+      - "tests/test_browser_installer_monitor.py"
+      - "tests/test_browser_installer_contract.py"
+      - "tests/test_browser_installer_staging.py"
+      - "tests/fixtures/browser_installer/**"
+  schedule:
+    - cron: "23 */6 * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: browser-installer-monitor
+  cancel-in-progress: false
+
+jobs:
+  contract-tests:
+    name: Network-free monitor contract tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b
+        with:
+          python-version: "3.11"
+      - name: Install test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pytest "PyYAML>=6,<7"
+      - name: Run network-free suites
+        run: >-
+          python -m pytest -q -p no:cacheprovider
+          tests/test_browser_installer_monitor.py
+          tests/test_browser_installer_contract.py
+          tests/test_browser_installer_staging.py
+          tests/test_onboarding_release_contract.py
+
+  monitor:
+    name: Read-only production monitor
+    # The real monitor never runs in the pull_request context.
+    if: github.event_name != 'pull_request'
+    needs: contract-tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      # Deliberately NO default and NO fallback expression: an unset or
+      # empty repository variable must reach the tool unchanged and fail
+      # closed there (ACTIVATION). The value can only switch the pinned
+      # stable host on/off — never supply a host name.
+      PVA_INSTALL_HOST_MONITOR_STATE: ${{ vars.PVA_INSTALL_HOST_MONITOR_STATE }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b
+        with:
+          python-version: "3.11"
+      - name: Run fail-closed monitor (read-only)
+        run: python tools/browser_installer/monitor_browser_installer.py
